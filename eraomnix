@@ -1,0 +1,348 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use HTTP::Request::Common qw(GET);
+use HTTP::Cookies ();
+use LWP::UserAgent ();
+use Crypt::SSLeay ();
+use Fcntl qw(:flock :DEFAULT);
+use Getopt::Long qw(:config gnu_getopt no_ignore_case);
+use Pod::Usage qw(pod2usage);
+use Apache::ConfigFile ();
+
+our $VERSION = '0.20060727';
+my $site = 'eraomnix.pl';
+my $cookie_domain = 'www.eraomnix.pl';
+my $software_name = 'eraomnix';
+my $config_file = 'eraomnix.conf';
+
+my $debug = 0;
+my $person2number;
+my $number2person;
+my $reject_unpersons = 0;
+
+sub quit { printf STDERR "%s\n", shift; exit 1; }
+
+sub error
+{
+  my ($message, $code) = @_;
+  $message .= " ($code)" if $debug;
+  quit $message; 
+}
+
+sub api_error { error 'API error', "code: $_[0]"; }
+
+sub http_error { error 'HTTP error', $_[0] }
+
+sub debug { printf STDERR "%s\n", shift if $debug; };
+
+sub lwp_init
+{
+  my $ua = new LWP::UserAgent;
+  $ua->timeout(30);
+  $ua->agent('Mozilla/5.0');
+  $ua->env_proxy();
+  $ua->cookie_jar(HTTP::Cookies->new(file => './cookie-jar.txt', autosave => 1, ignore_discard => 1));
+  return $ua;
+}
+
+sub expand_tilde
+{
+  ($_) = @_;
+  s{^~([^/]*)}{length $1 > 0 ? (getpwnam($1))[7] : ( $ENV{'HOME'} || $ENV{'LOGDIR'} )}e;
+  return $_;
+}
+
+sub transliterate
+{
+  require IPC::Open3; import IPC::Open3 qw(open3);
+  local $/;
+  my ($text) = @_;
+  my $pid = open3(\*TEXT, \*TEXT_ASCII, undef, '/usr/bin/konwert', 'utf8-ascii') or quit q{Can't invoke `konwert'};
+  binmode(TEXT, ':encoding(utf-8)');
+  print TEXT $text;
+  close TEXT;
+  $text = <TEXT_ASCII>;
+  close TEXT_ASCII;
+  waitpid $pid, 0;
+  return $text;
+}
+
+sub codeset
+{
+  require I18N::Langinfo; import I18N::Langinfo qw(langinfo CODESET);
+  my $codeset = langinfo(CODESET()) or die;
+  return $codeset;
+}
+
+sub resolve_number
+{
+  my ($number) = @_;
+  if (defined $number2person)
+  {
+    open N2P, '-|:encoding(utf-8)', $number2person, $number or quit q(Can't invoke resolver);
+    $_ = <N2P>;
+    close N2P;
+    my ($person) = split /\t/ if defined $_;
+    return "$person <$number>" if defined $person;
+  }
+  return undef if $reject_unpersons;
+  return "<$number>";
+}
+
+sub resolve_recipient
+{
+  my ($number, $recipient);
+  ($recipient) = @_;
+  if ($recipient =~ /[^+0-9]/ and defined $person2number)
+  {
+    open P2N, '-|:encoding(utf-8)', $person2number, $recipient or quit q(Can't invoke resolver);
+    my @phonebook = <P2N>;
+    close P2N;
+    if ($#phonebook == 0)
+    {
+      ($_, $number) = split /\t/, $phonebook[0];
+    }
+    elsif ($#phonebook > 0)
+    {
+      print STDERR "Ambiguous recipient, please make up your mind:\n";
+      print STDERR "  $_" foreach @phonebook;
+      exit 1;
+    }
+    else
+    {
+      $number = '';
+    }
+  }
+  else
+  {
+    $number = $recipient;
+  }
+  quit 'No such recipient' unless $number =~ /^(\+48)?([0-9]{9})$/;
+  $number = $2;
+  $recipient = resolve_number($number);
+  quit 'No such recipient' unless defined $recipient;
+  return ($number, $recipient);
+}
+
+my $action = 's';
+my $proto = 'https';
+my $signature = undef;
+my $force = 0;
+GetOptions(
+  'send|s' =>         sub { $action = 's'; },
+  'count|c' =>        sub { $action = 'c'; },
+  'logout' =>         sub { $action = '0'; },
+  'signature=s' =>    \$signature,
+  'force' =>          \$force,
+  'version' =>        sub { quit "$software_name, version $VERSION"; },
+  'debug' =>          \$debug,
+  'help|h|?' =>       sub { pod2usage(1); }
+) or pod2usage(1);
+my $env = $software_name;
+$env =~ s/\W//g;
+$env =~ y/a-z/A-Z/;
+$env .= '_HOME';
+my $home = exists $ENV{$env} ? $ENV{$env} : "$ENV{'HOME'}/.$software_name/";
+chdir $home or quit "Can't change working directory to $home";
+
+my $ua = lwp_init();
+
+my $login = '';
+my $password;
+
+my %conf_vars = 
+(
+  'login' => sub 
+    { $login = shift; },
+  'password' => sub 
+    { $password = shift; },
+  'password64' => sub
+    { 
+      use MIME::Base64 ();
+      $password = MIME::Base64::decode(shift);
+    },
+  'signature' => sub 
+    { $signature = shift if not defined $signature; },
+  'number2person' => sub 
+    { $number2person = expand_tilde(shift); },
+  'person2number' => sub 
+    { $person2number = expand_tilde(shift); },
+  'reject_unpersons' => sub 
+    { $reject_unpersons = parse_yes_no(shift); },
+  'debug' => sub 
+    { $debug = shift; },
+  'ssl' => sub 
+    { $proto = shift() ? 'https' : 'http'; }
+);
+
+my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
+foreach my $context (($ac, $ac->cmd_context(site => $site)))
+{
+  foreach my $var (keys %conf_vars)
+  {
+    my $val = $context->cmd_config($var);
+    $conf_vars{$var}($val) if defined $val;
+  }
+}
+
+$reject_unpersons = 0 if $force;
+quit 'Invalid login name' unless $login =~ /^(\+?48)?([0-9]{9})$/;
+$login = "48$2";
+quit 'No password provided' unless defined $password;
+unless (defined $signature)
+{
+  debug 'No signature provided: using an empty signature';
+  $signature = '';
+}
+
+debug "Login: $login\@$site";
+
+my $number;
+my $body;
+my $body_len;
+my $signature_len;
+my $message_len;
+
+if ($action eq 's')
+{
+  pod2usage(1) if $#ARGV != 1;
+
+  require Encode; import Encode qw(encode decode);
+  require Text::Wrap; import Text::Wrap qw(wrap);
+  my $codeset = codeset();
+  debug "Codeset: $codeset";
+  binmode STDERR, ":encoding($codeset)";
+  binmode STDOUT, ":encoding($codeset)";
+  
+  (my $recipient, $body) = @ARGV;
+  $recipient = decode($codeset, $recipient);
+  $body = decode($codeset, $body);
+  ($number, $recipient) = resolve_recipient $recipient;
+  debug "Recipient: $recipient";
+  $body = transliterate($body);
+  $signature = transliterate(decode($codeset, $signature));
+  debug "Message:\n" . wrap("  ", "  ", $body) . "\n\n" . wrap("  ", "  ", $signature) . "\n";
+  $body_len = length $body;
+  $signature_len = length $signature;
+  $message_len = $body_len + $signature_len;
+  debug "Message length: $body_len + $signature_len = $message_len";
+}
+elsif ($action eq '0')
+{
+  $ua->cookie_jar->clear($cookie_domain);
+  debug 'Cookies has been purged';
+  exit;
+}
+
+debug 'Warning: unsecure connection!' if $proto eq 'http';
+my $res;
+my $base_url = "$proto://www.eraomnix.pl/msg/user/sponsored/welcome.do";
+$res = $ua->simple_request(GET $base_url);
+if ($res->is_redirect)
+{
+  debug 'Logging in...';
+  my $login_uri = "$proto://www.eraomnix.pl/sso2/omnix_iframe/login.jsp";
+	$res = $ua->simple_request(GET $login_uri);
+  http_error $login_uri unless $res->is_success;
+  require HTML::Form;
+  my $form = HTML::Form->parse($res);
+  my $re_action = qr{/authenticate\.do(;jsessionid=[0-9A-Za-z]+![0-9]+)?$};
+  api_error 'L1' unless $form->action =~ $re_action;
+  $form->value('login' => $login);
+  $form->value('password' => $password);
+  $res = $ua->simple_request($form->click);
+  http_error $form->action unless $res->is_redirect;
+  quit 'Login error: blocked account' if $res->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
+  $res = $ua->simple_request(GET $base_url);
+}
+quit 'Login error' if $res->is_redirect;
+http_error $base_url unless $res->is_success;
+debug 'Logged in!';
+
+sub extract_remaining
+{
+  ($_) = @_;
+  api_error 'c1' unless m{Pozosta.o SMS.w: <b>([0-9]+)</b>};
+  return int($1);
+}
+
+my $remaining = extract_remaining($res->content);
+
+if ($action eq 'c')
+{
+  print "Number of remaining messages: $remaining\n";
+}
+elsif ($action eq 's')
+{
+  quit 'Message limit exceeded' if $remaining == 0;
+  debug 'Ready to send...';
+  require HTML::Form;
+  my $form = HTML::Form->parse($res);
+  my $character_limit = $form->value('top.characterLimit');
+  api_error 's1' unless $character_limit =~ /^[0-9]{3}$/;
+  quit "Message too long ($body_len + $signature_len > $character_limit)" if $message_len > $character_limit;
+  $form->value('top.phoneReceiver' => $number);
+  $form->value('top.text' => $body);
+  $form->value('top.signature' => $signature);
+  debug 'Sending...';
+  $res = $ua->simple_request($form->click('send'));
+  http_error $form->action unless $res->is_success;
+  if ($res->content =~ m{<span style="color: red;"><b>(.*?)</b></span>})
+  {
+    $_ = $1;
+    my $info = 'Error while sending the message';
+    $info .= ': non-Era recipient' if /spoza sieci PTC/;
+    quit $info;
+  }
+  my $remaining_after = extract_remaining $res->content;
+  quit 'Error while sending the message, I guess...' unless $remaining_after < $remaining;
+  debug 'Looks OK';
+  debug "Number of remaining messages: $remaining_after";
+}
+
+__END__
+
+=head1 NAME
+
+eraomnix -- send SMs via Era Omnix gateway
+
+=head1 SYNOPSIS
+
+=over 4
+
+=item eraomnix [-s] [--force] [--signature I<< <signature> >>] I<< <phone-number> >> I<< <text> >>
+
+=item eraomnix -c
+
+=item eraomnix --logout
+
+=back
+
+=head1 ENVIRONMENT
+
+ERAOMNIX_HOME (default: F<$HOME/.eraomnix/>)
+
+=head1 FILES
+
+=over 4
+
+=item F<$ERAOMNIX_HOME/eraomnix.conf>
+
+=item F<$ERAOMNIX_HOME/cookie-jar.txt>
+
+=back
+
+=head1 AUTHOR
+
+Written by Jakub Wilk E<lt>ubanus@users.sf.netE<gt>, mainly on 24 Jul 2006.
+
+=head1 COPYRIGHT
+
+You may redistribute copies of B<eraomnix> under the terms of the GNU General Public License, version 2.
+
+=cut
+
+# vim:ts=2 sw=2 et
