@@ -11,7 +11,7 @@ eraomnix.1: eraomnix
 clean:
 	dh_testdir
 	dh_testroot
-	dh_clean 
+	dh_clean eraomnix.1
 
 install: build
 	dh_testdir

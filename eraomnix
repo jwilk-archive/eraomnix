@@ -7,14 +7,12 @@ use HTTP::Request::Common qw(GET);
 use HTTP::Cookies ();
 use LWP::UserAgent ();
 use Crypt::SSLeay ();
-use Fcntl qw(:flock :DEFAULT);
 use Getopt::Long qw(:config gnu_getopt no_ignore_case);
 use Pod::Usage qw(pod2usage);
 use Apache::ConfigFile ();
 
-our $VERSION = '0.20060727';
+our $VERSION = '0.4';
 my $site = 'eraomnix.pl';
-my $cookie_domain = 'www.eraomnix.pl';
 my $software_name = 'eraomnix';
 my $config_file = 'eraomnix.conf';
 
@@ -23,22 +21,22 @@ my $person2number;
 my $number2person;
 my $reject_unpersons = 0;
 
-sub quit { printf STDERR "%s\n", shift; exit 1; }
+sub quit($) { print STDERR "$_[0]\n"; exit 1; }
 
-sub error
+sub error($$)
 {
   my ($message, $code) = @_;
   $message .= " ($code)" if $debug;
   quit $message; 
 }
 
-sub api_error { error 'API error', "code: $_[0]"; }
+sub api_error($) { error 'API error', "code: $_[0]"; }
 
-sub http_error { error 'HTTP error', $_[0] }
+sub http_error($) { error 'HTTP error', $_[0] }
 
-sub debug { printf STDERR "%s\n", shift if $debug; };
+sub debug($) { print STDERR "$_[0]\n" if $debug; };
 
-sub lwp_init
+sub lwp_init()
 {
   my $ua = new LWP::UserAgent;
   $ua->timeout(30);
@@ -48,19 +46,19 @@ sub lwp_init
   return $ua;
 }
 
-sub expand_tilde
+sub expand_tilde($)
 {
   ($_) = @_;
   s{^~([^/]*)}{length $1 > 0 ? (getpwnam($1))[7] : ( $ENV{'HOME'} || $ENV{'LOGDIR'} )}e;
   return $_;
 }
 
-sub transliterate
+sub transliterate($)
 {
-  require IPC::Open3; import IPC::Open3 qw(open3);
+  require IPC::Open3;
   local $/;
   my ($text) = @_;
-  my $pid = open3(\*TEXT, \*TEXT_ASCII, undef, '/usr/bin/konwert', 'utf8-ascii') or quit q{Can't invoke `konwert'};
+  my $pid = IPC::Open3::open3(\*TEXT, \*TEXT_ASCII, undef, '/usr/bin/konwert', 'utf8-ascii') or quit q{Can't invoke `konwert'};
   binmode(TEXT, ':encoding(utf-8)');
   print TEXT $text;
   close TEXT;
@@ -70,14 +68,14 @@ sub transliterate
   return $text;
 }
 
-sub codeset
+sub codeset()
 {
   require I18N::Langinfo; import I18N::Langinfo qw(langinfo CODESET);
   my $codeset = langinfo(CODESET()) or die;
   return $codeset;
 }
 
-sub resolve_number
+sub resolve_number($)
 {
   my ($number) = @_;
   if (defined $number2person)
@@ -92,7 +90,7 @@ sub resolve_number
   return "<$number>";
 }
 
-sub resolve_recipient
+sub resolve_recipient($)
 {
   my ($number, $recipient);
   ($recipient) = @_;
@@ -127,14 +125,30 @@ sub resolve_recipient
   return ($number, $recipient);
 }
 
-my $action = 's';
+use constant
+{
+  ACTION_VOID => 0,
+  ACTION_SEND => 1,
+  ACTION_COUNT => 2,
+  ACTION_INBOX => 3,
+  ACTION_LOGOUT => 99,
+  FAKE_DOMAIN => 'eraomnix.invalid',
+  COOKIE_DOMAIN => 'www.eraomnix.pl'
+};
+
+my $action = ACTION_SEND;
+my $account = 'default';
+my $account0 = 'default';
 my $proto = 'https';
 my $signature = undef;
 my $force = 0;
 GetOptions(
-  'send|s' =>         sub { $action = 's'; },
-  'count|c' =>        sub { $action = 'c'; },
-  'logout' =>         sub { $action = '0'; },
+  'send|s' =>         sub { $action = ACTION_SEND; },
+  'count|c' =>        sub { $action = ACTION_COUNT; },
+  'inbox|m' =>        sub { $action = ACTION_INBOX; },
+  'logout' =>         sub { $action = ACTION_LOGOUT; },
+  'void' =>           sub { $action = ACTION_VOID; },
+  'account=s' =>      \$account,
   'signature=s' =>    \$signature,
   'force' =>          \$force,
   'version' =>        sub { quit "$software_name, version $VERSION"; },
@@ -148,8 +162,6 @@ $env .= '_HOME';
 my $home = exists $ENV{$env} ? $ENV{$env} : "$ENV{'HOME'}/.$software_name/";
 chdir $home or quit "Can't change working directory to $home";
 
-my $ua = lwp_init();
-
 my $login = '';
 my $password;
 
@@ -161,10 +173,10 @@ my %conf_vars =
     { $password = shift; },
   'password64' => sub
     { 
-      use MIME::Base64 ();
+      require MIME::Base64;
       $password = MIME::Base64::decode(shift);
     },
-  'signature' => sub 
+  'signature' => sub
     { $signature = shift if not defined $signature; },
   'number2person' => sub 
     { $number2person = expand_tilde(shift); },
@@ -181,10 +193,15 @@ my %conf_vars =
 my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
 foreach my $context (($ac, $ac->cmd_context(site => $site)))
 {
-  foreach my $var (keys %conf_vars)
+  my @subcontexts = $context;
+  push @subcontexts, $context->cmd_context(account => $account) if grep { $_ eq $account } $context->cmd_context('Account');
+  foreach my $subcontext (@subcontexts)
   {
-    my $val = $context->cmd_config($var);
-    $conf_vars{$var}($val) if defined $val;
+    foreach my $var (keys %conf_vars)
+    {
+      my $val = $subcontext->cmd_config($var);
+      $conf_vars{$var}($val) if defined $val;
+    }
   }
 }
 
@@ -200,40 +217,56 @@ unless (defined $signature)
 
 debug "Login: $login\@$site";
 
+my $ua = lwp_init();
+
+$ua->cookie_jar->scan(
+  sub
+  {
+    my ($version, $key, $val, $path, $domain) = @_;
+    $account0 = $val if $domain eq FAKE_DOMAIN and $key eq 'account';
+  }
+);
+$ua->cookie_jar->clear(COOKIE_DOMAIN) if $account ne $account0;
+$ua->cookie_jar->set_cookie(0, 'account', $account, '/', FAKE_DOMAIN, undef, undef, undef, 1 << 25, undef);
+
 my $number;
 my $body;
 my $body_len;
 my $signature_len;
 my $message_len;
 
-if ($action eq 's')
+if ($action == ACTION_SEND)
 {
   pod2usage(1) if $#ARGV != 1;
 
-  require Encode; import Encode qw(encode decode);
-  require Text::Wrap; import Text::Wrap qw(wrap);
+  require Encode;
+  require Text::Wrap;
   my $codeset = codeset();
   debug "Codeset: $codeset";
   binmode STDERR, ":encoding($codeset)";
   binmode STDOUT, ":encoding($codeset)";
   
   (my $recipient, $body) = @ARGV;
-  $recipient = decode($codeset, $recipient);
-  $body = decode($codeset, $body);
+  $recipient = Encode::decode($codeset, $recipient);
+  $body = Encode::decode($codeset, $body);
   ($number, $recipient) = resolve_recipient $recipient;
   debug "Recipient: $recipient";
   $body = transliterate($body);
-  $signature = transliterate(decode($codeset, $signature));
-  debug "Message:\n" . wrap("  ", "  ", $body) . "\n\n" . wrap("  ", "  ", $signature) . "\n";
+  $signature = transliterate(Encode::decode($codeset, $signature));
+  debug "Message:\n" . Text::Wrap::wrap("  ", "  ", $body) . "\n\n" . Text::Wrap::wrap("  ", "  ", $signature) . "\n";
   $body_len = length $body;
   $signature_len = length $signature;
   $message_len = $body_len + $signature_len;
   debug "Message length: $body_len + $signature_len = $message_len";
 }
-elsif ($action eq '0')
+elsif ($action == ACTION_LOGOUT)
 {
-  $ua->cookie_jar->clear($cookie_domain);
+  $ua->cookie_jar->clear(COOKIE_DOMAIN);
   debug 'Cookies has been purged';
+  exit;
+}
+elsif ($action == ACTION_VOID)
+{
   exit;
 }
 
@@ -262,20 +295,46 @@ quit 'Login error' if $res->is_redirect;
 http_error $base_url unless $res->is_success;
 debug 'Logged in!';
 
-sub extract_remaining
+sub extract_remaining($)
 {
   ($_) = @_;
-  api_error 'c1' unless m{Pozosta.o SMS.w: <b>([0-9]+)</b>};
+  api_error 'c1' unless m{Pozosta\xb3o SMS\xf3w: <b>([0-9]+)</b>};
   return int($1);
 }
 
 my $remaining = extract_remaining($res->content);
 
-if ($action eq 'c')
+if ($action == ACTION_COUNT)
 {
   print "Number of remaining messages: $remaining\n";
 }
-elsif ($action eq 's')
+elsif ($action == ACTION_INBOX)
+{
+  require HTML::Entities;
+  require Text::Wrap;
+  require Encode;
+  
+  my $codeset = codeset();
+  debug "Codeset: $codeset";
+  binmode STDOUT, ":encoding($codeset)";
+  
+  $res->content =~ m{<span id="inboxSize">([0-9]+)</span>} or api_error 'Inbox1';
+  my $n = int($1);
+  my $url = "$proto://www.eraomnix.pl/msg/user/sponsored/inbox/prepare.do";
+  $res = $ua->simple_request(GET $url);
+  $res->is_success or http_error $url;
+  for my $i (0 .. $n-1)
+  {
+    $res->content =~ m{case\s+$i:\s+document\.getElementById\("textdiv"\)\.innerHTML\s+=\s+'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}),\s+Od:\s+<b>'\s*\+\s*'(\d+)</b>'\s*\+\s*'\s+Do:\s+<b>\d+</b><br/><br/>'\s*\+\s*wrapText\('(.*?)'\);\s*break;} or api_error 'Inbox2';
+    print "From: <$2>\n";
+    print "Date: $1\n";
+    my $text = HTML::Entities::decode_entities($3);
+    $text = Encode::decode("ISO-8859-2", $text);
+    $text = "\n" . Text::Wrap::wrap("  ", "  ", $text);
+    print "Contents: $text\n\n";
+  }
+}
+elsif ($action == ACTION_SEND)
 {
   quit 'Message limit exceeded' if $remaining == 0;
   debug 'Ready to send...';
@@ -316,6 +375,8 @@ eraomnix -- send SMs via Era Omnix gateway
 =item eraomnix [-s] [--force] [--signature I<< <signature> >>] I<< <phone-number> >> I<< <text> >>
 
 =item eraomnix -c
+
+=item eraomnix -m
 
 =item eraomnix --logout
 

@@ -1,3 +1,10 @@
+eraomnix (0.4) unstable; urgency=low
+
+  * Support for multiple accounts.
+  * Support for reading incoming messages.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Sat, 12 Aug 2006 19:37:33 +0200
+
 eraomnix (0.3) unstable; urgency=low
 
   * Initial release.
