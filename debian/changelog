@@ -1,3 +1,10 @@
+eraomnix (0.5) unstable; urgency=low
+
+  * Make 'RejectUnperson' and 'UseSSL' configuration options actually work.
+  * New configuration option: 'UseBell'.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Sat, 19 Aug 2006 18:05:30 +0200
+
 eraomnix (0.4) unstable; urgency=low
 
   * Support for multiple accounts.

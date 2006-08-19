@@ -17,11 +17,18 @@ my $software_name = 'eraomnix';
 my $config_file = 'eraomnix.conf';
 
 my $debug = 0;
+my $use_bell = 0;
 my $person2number;
 my $number2person;
 my $reject_unpersons = 0;
 
-sub quit($) { print STDERR "$_[0]\n"; exit 1; }
+sub quit(;$)
+{
+  my ($message) = @_;
+  print STDERR "\a" if $use_bell;
+  print STDERR "$message\n" if defined $message;
+  exit 1; 
+}
 
 sub error($$)
 {
@@ -107,7 +114,7 @@ sub resolve_recipient($)
     {
       print STDERR "Ambiguous recipient, please make up your mind:\n";
       print STDERR "  $_" foreach @phonebook;
-      exit 1;
+      quit;
     }
     else
     {
@@ -182,12 +189,14 @@ my %conf_vars =
     { $number2person = expand_tilde(shift); },
   'person2number' => sub 
     { $person2number = expand_tilde(shift); },
-  'reject_unpersons' => sub 
-    { $reject_unpersons = parse_yes_no(shift); },
+  'rejectunpersons' => sub 
+    { $reject_unpersons = shift; },
   'debug' => sub 
     { $debug = shift; },
-  'ssl' => sub 
-    { $proto = shift() ? 'https' : 'http'; }
+  'usessl' => sub 
+    { $proto = shift() ? 'https' : 'http'; },
+  'usebell' => sub
+    { $use_bell = shift; }
 );
 
 my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
