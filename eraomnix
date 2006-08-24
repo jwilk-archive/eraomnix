@@ -11,7 +11,7 @@ use Getopt::Long qw(:config gnu_getopt no_ignore_case);
 use Pod::Usage qw(pod2usage);
 use Apache::ConfigFile ();
 
-our $VERSION = '0.4';
+our $VERSION = '0.6';
 my $site = 'eraomnix.pl';
 my $software_name = 'eraomnix';
 my $config_file = 'eraomnix.conf';
@@ -97,7 +97,7 @@ sub resolve_number($)
   return "<$number>";
 }
 
-sub resolve_recipient($)
+sub resolve_person($)
 {
   my ($number, $recipient);
   ($recipient) = @_;
@@ -258,7 +258,7 @@ if ($action == ACTION_SEND)
   (my $recipient, $body) = @ARGV;
   $recipient = Encode::decode($codeset, $recipient);
   $body = Encode::decode($codeset, $body);
-  ($number, $recipient) = resolve_recipient $recipient;
+  ($number, $recipient) = resolve_person $recipient;
   debug "Recipient: $recipient";
   $body = transliterate($body);
   $signature = transliterate(Encode::decode($codeset, $signature));
@@ -332,14 +332,17 @@ elsif ($action == ACTION_INBOX)
   my $url = "$proto://www.eraomnix.pl/msg/user/sponsored/inbox/prepare.do";
   $res = $ua->simple_request(GET $url);
   $res->is_success or http_error $url;
+  $reject_unpersons = 0;
   for my $i (0 .. $n-1)
   {
     $res->content =~ m{case\s+$i:\s+document\.getElementById\("textdiv"\)\.innerHTML\s+=\s+'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}),\s+Od:\s+<b>'\s*\+\s*'(\d+)</b>'\s*\+\s*'\s+Do:\s+<b>\d+</b><br/><br/>'\s*\+\s*wrapText\('(.*?)'\);\s*break;} or api_error 'Inbox2';
-    print "From: <$2>\n";
-    print "Date: $1\n";
-    my $text = HTML::Entities::decode_entities($3);
-    $text = Encode::decode("ISO-8859-2", $text);
-    $text = "\n" . Text::Wrap::wrap("  ", "  ", $text);
+    my ($date, $sender, $text) = ($1, $2, $3);
+    $sender = resolve_number $sender;
+    print "From: $sender\n";
+    print "Date: $date\n";
+    $text = HTML::Entities::decode_entities($text);
+    $text = Encode::decode('ISO-8859-2', $text);
+    $text = "\n" . Text::Wrap::wrap('  ', '  ', $text);
     print "Contents: $text\n\n";
   }
 }
