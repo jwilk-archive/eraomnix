@@ -4,14 +4,10 @@ use strict;
 use warnings;
 
 use HTTP::Request::Common qw(GET);
-use HTTP::Cookies ();
-use LWP::UserAgent ();
-use Crypt::SSLeay ();
 use Getopt::Long qw(:config gnu_getopt no_ignore_case);
 use Pod::Usage qw(pod2usage);
-use Apache::ConfigFile ();
 
-our $VERSION = '0.6';
+our $VERSION = '0.7';
 my $site = 'eraomnix.pl';
 my $software_name = 'eraomnix';
 my $config_file = 'eraomnix.conf';
@@ -39,17 +35,20 @@ sub error($$)
 
 sub api_error($) { error 'API error', "code: $_[0]"; }
 
-sub http_error($) { error 'HTTP error', $_[0] }
+sub http_error($) { error 'HTTP error', $_[0]; }
 
 sub debug($) { print STDERR "$_[0]\n" if $debug; };
 
 sub lwp_init()
 {
-  my $ua = new LWP::UserAgent;
+  require LWP::UserAgent;
+  require HTTP::Cookies;
+  require Crypt::SSLeay;
+  my $ua = new LWP::UserAgent();
   $ua->timeout(30);
   $ua->agent('Mozilla/5.0');
   $ua->env_proxy();
-  $ua->cookie_jar(HTTP::Cookies->new(file => './cookie-jar.txt', autosave => 1, ignore_discard => 1));
+  $ua->cookie_jar(new HTTP::Cookies(file => './cookie-jar.txt', autosave => 1, ignore_discard => 1));
   return $ua;
 }
 
@@ -62,16 +61,9 @@ sub expand_tilde($)
 
 sub transliterate($)
 {
-  require IPC::Open3;
-  local $/;
+  require Text::Unidecode;
   my ($text) = @_;
-  my $pid = IPC::Open3::open3(\*TEXT, \*TEXT_ASCII, undef, '/usr/bin/konwert', 'utf8-ascii') or quit q{Can't invoke `konwert'};
-  binmode(TEXT, ':encoding(utf-8)');
-  print TEXT $text;
-  close TEXT;
-  $text = <TEXT_ASCII>;
-  close TEXT_ASCII;
-  waitpid $pid, 0;
+  Text::Unidecode::unidecode($text);
   return $text;
 }
 
@@ -101,7 +93,7 @@ sub resolve_person($)
 {
   my ($number, $recipient);
   ($recipient) = @_;
-  if ($recipient =~ /[^+0-9]/ and defined $person2number)
+  if ($recipient =~ /[^+\d]/ and defined $person2number)
   {
     open P2N, '-|:encoding(utf-8)', $person2number, $recipient or quit q(Can't invoke resolver);
     my @phonebook = <P2N>;
@@ -125,8 +117,8 @@ sub resolve_person($)
   {
     $number = $recipient;
   }
-  quit 'No such recipient' unless $number =~ /^(\+48)?([0-9]{9})$/;
-  $number = $2;
+  quit 'No such recipient' unless $number =~ /^(?:\+?48)?(\d{9})$/;
+  $number = $1;
   $recipient = resolve_number($number);
   quit 'No such recipient' unless defined $recipient;
   return ($number, $recipient);
@@ -172,7 +164,27 @@ chdir $home or quit "Can't change working directory to $home";
 my $login = '';
 my $password;
 
-my %conf_vars = 
+sub read_config(%)
+{
+  require Apache::ConfigFile;
+  my (%conf_vars) = @_;
+  my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
+  foreach my $context (($ac, scalar $ac->cmd_context(site => $site)))
+  {
+    next unless $context =~ /\D/;
+    foreach my $subcontext ($context, $context->cmd_context(account => $account))
+    {
+      next unless $subcontext =~ /\D/;
+      foreach my $var (keys %conf_vars)
+      {
+        my $val = $subcontext->cmd_config($var);
+        $conf_vars{$var}($val) if defined $val;
+      }
+    }
+  }
+}
+
+read_config
 (
   'login' => sub 
     { $login = shift; },
@@ -198,21 +210,6 @@ my %conf_vars =
   'usebell' => sub
     { $use_bell = shift; }
 );
-
-my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
-foreach my $context (($ac, $ac->cmd_context(site => $site)))
-{
-  my @subcontexts = $context;
-  push @subcontexts, $context->cmd_context(account => $account) if grep { $_ eq $account } $context->cmd_context('Account');
-  foreach my $subcontext (@subcontexts)
-  {
-    foreach my $var (keys %conf_vars)
-    {
-      my $val = $subcontext->cmd_config($var);
-      $conf_vars{$var}($val) if defined $val;
-    }
-  }
-}
 
 $reject_unpersons = 0 if $force;
 quit 'Invalid login name' unless $login =~ /^(\+?48)?([0-9]{9})$/;
@@ -410,7 +407,7 @@ ERAOMNIX_HOME (default: F<$HOME/.eraomnix/>)
 
 =head1 AUTHOR
 
-Written by Jakub Wilk E<lt>ubanus@users.sf.netE<gt>, mainly on 24 Jul 2006.
+Written by Jakub Wilk E<lt>ubanus@users.sf.netE<gt>.
 
 =head1 COPYRIGHT
 
@@ -418,4 +415,4 @@ You may redistribute copies of B<eraomnix> under the terms of the GNU General Pu
 
 =cut
 
-# vim:ts=2 sw=2 et
+vim:ts=2 sw=2 et

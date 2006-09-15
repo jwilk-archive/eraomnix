@@ -1,3 +1,10 @@
+eraomnix (0.7) unstable; urgency=low
+
+  * Better config file parsing.
+  * Use Text::Unidecode instead of konwert.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Fri, 15 Sep 2006 08:49:37 +0200
+
 eraomnix (0.6) unstable; urgency=low
 
   * Action -m: resolve phone numbers. 
