@@ -3,338 +3,216 @@
 use strict;
 use warnings;
 
-use HTTP::Request::Common qw(GET);
-use Getopt::Long qw(:config gnu_getopt no_ignore_case);
-use Pod::Usage qw(pod2usage);
+package EraOmnix;
+my $this = __PACKAGE__;
 
-our $VERSION = '0.7';
-my $site = 'eraomnix.pl';
-my $software_name = 'eraomnix';
-my $config_file = 'eraomnix.conf';
+use base qw(kawute);
 
-my $debug = 0;
-my $use_bell = 0;
-my $person2number;
-my $number2person;
-my $reject_unpersons = 0;
+our $VERSION = '0.8';
+sub version($) { $EraOmnix::VERSION; }
+sub site($) { 'eraomnix.pl'; }
+sub software_name($) { 'eraomnix'; }
+sub config_file($) { 'eraomnix.conf'; }
+sub cookie_domain($) { 'www.eraomnix.pl'; }
 
-sub quit(;$)
+sub lwp_init($)
 {
-  my ($message) = @_;
-  print STDERR "\a" if $use_bell;
-  print STDERR "$message\n" if defined $message;
-  exit 1; 
-}
-
-sub error($$)
-{
-  my ($message, $code) = @_;
-  $message .= " ($code)" if $debug;
-  quit $message; 
-}
-
-sub api_error($) { error 'API error', "code: $_[0]"; }
-
-sub http_error($) { error 'HTTP error', $_[0]; }
-
-sub debug($) { print STDERR "$_[0]\n" if $debug; };
-
-sub lwp_init()
-{
-  require LWP::UserAgent;
-  require HTTP::Cookies;
   require Crypt::SSLeay;
-  my $ua = new LWP::UserAgent();
-  $ua->timeout(30);
-  $ua->agent('Mozilla/5.0');
-  $ua->env_proxy();
-  $ua->cookie_jar(new HTTP::Cookies(file => './cookie-jar.txt', autosave => 1, ignore_discard => 1));
+  my ($this) = @_;
+  my $ua = kawute::lwp_init($this);
   return $ua;
 }
 
-sub expand_tilde($)
+sub fix_number($$)
 {
-  ($_) = @_;
-  s{^~([^/]*)}{length $1 > 0 ? (getpwnam($1))[7] : ( $ENV{'HOME'} || $ENV{'LOGDIR'} )}e;
-  return $_;
+  my ($this, $number) = @_;
+  $this->quit('No such recipient') unless $number =~ /^(?:\+?48)?(\d{9})$/;
+  return $1;
 }
-
-sub transliterate($)
-{
-  require Text::Unidecode;
-  my ($text) = @_;
-  Text::Unidecode::unidecode($text);
-  return $text;
-}
-
-sub codeset()
-{
-  require I18N::Langinfo; import I18N::Langinfo qw(langinfo CODESET);
-  my $codeset = langinfo(CODESET()) or die;
-  return $codeset;
-}
-
-sub resolve_number($)
-{
-  my ($number) = @_;
-  if (defined $number2person)
-  {
-    open N2P, '-|:encoding(utf-8)', $number2person, $number or quit q(Can't invoke resolver);
-    $_ = <N2P>;
-    close N2P;
-    my ($person) = split /\t/ if defined $_;
-    return "$person <$number>" if defined $person;
-  }
-  return undef if $reject_unpersons;
-  return "<$number>";
-}
-
-sub resolve_person($)
-{
-  my ($number, $recipient);
-  ($recipient) = @_;
-  if ($recipient =~ /[^+\d]/ and defined $person2number)
-  {
-    open P2N, '-|:encoding(utf-8)', $person2number, $recipient or quit q(Can't invoke resolver);
-    my @phonebook = <P2N>;
-    close P2N;
-    if ($#phonebook == 0)
-    {
-      ($_, $number) = split /\t/, $phonebook[0];
-    }
-    elsif ($#phonebook > 0)
-    {
-      print STDERR "Ambiguous recipient, please make up your mind:\n";
-      print STDERR "  $_" foreach @phonebook;
-      quit;
-    }
-    else
-    {
-      $number = '';
-    }
-  }
-  else
-  {
-    $number = $recipient;
-  }
-  quit 'No such recipient' unless $number =~ /^(?:\+?48)?(\d{9})$/;
-  $number = $1;
-  $recipient = resolve_number($number);
-  quit 'No such recipient' unless defined $recipient;
-  return ($number, $recipient);
-}
-
-use constant
-{
-  ACTION_VOID => 0,
-  ACTION_SEND => 1,
-  ACTION_COUNT => 2,
-  ACTION_INBOX => 3,
-  ACTION_LOGOUT => 99,
-  FAKE_DOMAIN => 'eraomnix.invalid',
-  COOKIE_DOMAIN => 'www.eraomnix.pl'
-};
-
-my $action = ACTION_SEND;
-my $account = 'default';
-my $account0 = 'default';
-my $proto = 'https';
-my $signature = undef;
-my $force = 0;
-GetOptions(
-  'send|s' =>         sub { $action = ACTION_SEND; },
-  'count|c' =>        sub { $action = ACTION_COUNT; },
-  'inbox|m' =>        sub { $action = ACTION_INBOX; },
-  'logout' =>         sub { $action = ACTION_LOGOUT; },
-  'void' =>           sub { $action = ACTION_VOID; },
-  'account=s' =>      \$account,
-  'signature=s' =>    \$signature,
-  'force' =>          \$force,
-  'version' =>        sub { quit "$software_name, version $VERSION"; },
-  'debug' =>          \$debug,
-  'help|h|?' =>       sub { pod2usage(1); }
-) or pod2usage(1);
-my $env = $software_name;
-$env =~ s/\W//g;
-$env =~ y/a-z/A-Z/;
-$env .= '_HOME';
-my $home = exists $ENV{$env} ? $ENV{$env} : "$ENV{'HOME'}/.$software_name/";
-chdir $home or quit "Can't change working directory to $home";
 
 my $login = '';
 my $password;
+my $proto = 'https';
+my $signature = undef;
 
-sub read_config(%)
+sub main($)
 {
-  require Apache::ConfigFile;
-  my (%conf_vars) = @_;
-  my $ac = Apache::ConfigFile->read(file => $config_file, ignore_case => 1, fix_booleans => 1, raise_error => 1);
-  foreach my $context (($ac, scalar $ac->cmd_context(site => $site)))
+  my ($this) = @_;
+  use constant
   {
-    next unless $context =~ /\D/;
-    foreach my $subcontext ($context, $context->cmd_context(account => $account))
-    {
-      next unless $subcontext =~ /\D/;
-      foreach my $var (keys %conf_vars)
-      {
-        my $val = $subcontext->cmd_config($var);
-        $conf_vars{$var}($val) if defined $val;
-      }
-    }
+    ACTION_VOID =>   sub { $this->action_void(); },
+    ACTION_SEND =>   sub { $this->action_send(); },
+    ACTION_COUNT =>  sub { $this->action_count(); },
+    ACTION_INBOX =>  sub { $this->action_inbox(); },
+    ACTION_LOGOUT => sub { $this->action_logout(); }
+  };
+
+  my $action = ACTION_SEND;
+  $this->get_options(
+    'send|s' =>         sub { $action = ACTION_SEND; },
+    'count|c' =>        sub { $action = ACTION_COUNT; },
+    'inbox|m' =>        sub { $action = ACTION_INBOX; },
+    'logout' =>         sub { $action = ACTION_LOGOUT; },
+    'void' =>           sub { $action = ACTION_VOID; },
+    'signature=s' =>    \$signature,
+  );
+  $this->go_home();
+  $this->read_config
+  (
+    'login' => sub 
+      { $login = shift; },
+    'password' => sub 
+      { $password = shift; },
+    'password64' => sub
+      { 
+        require MIME::Base64;
+        $password = MIME::Base64::decode(shift);
+      },
+    'signature' => sub
+      { $signature = shift if not defined $signature; },
+    'usessl' => sub 
+      { $proto = shift() ? 'https' : 'http'; },
+  );
+  $this->reject_unpersons(0) if $this->force();
+  $this->quit('Invalid login name') unless $login =~ /^(\+?48)?([0-9]{9})$/;
+  $login = "48$2";
+  $this->quit('No password provided') unless defined $password;
+  unless (defined $signature)
+  {
+    $this->debug_print('No signature provided: using an empty signature');
+    $signature = '';
   }
+  $this->debug_print("Login: $login\@" . $this->site());
+  &{$action}();
 }
 
-read_config
-(
-  'login' => sub 
-    { $login = shift; },
-  'password' => sub 
-    { $password = shift; },
-  'password64' => sub
-    { 
-      require MIME::Base64;
-      $password = MIME::Base64::decode(shift);
-    },
-  'signature' => sub
-    { $signature = shift if not defined $signature; },
-  'number2person' => sub 
-    { $number2person = expand_tilde(shift); },
-  'person2number' => sub 
-    { $person2number = expand_tilde(shift); },
-  'rejectunpersons' => sub 
-    { $reject_unpersons = shift; },
-  'debug' => sub 
-    { $debug = shift; },
-  'usessl' => sub 
-    { $proto = shift() ? 'https' : 'http'; },
-  'usebell' => sub
-    { $use_bell = shift; }
-);
-
-$reject_unpersons = 0 if $force;
-quit 'Invalid login name' unless $login =~ /^(\+?48)?([0-9]{9})$/;
-$login = "48$2";
-quit 'No password provided' unless defined $password;
-unless (defined $signature)
+sub do_login($)
 {
-  debug 'No signature provided: using an empty signature';
-  $signature = '';
+  my ($this) = @_;
+  my $ua = $this->lwp_init();
+  $this->debug_print('Warning: unsecure connection!') if $proto eq 'http';
+  my $res;
+  my $base_url = "$proto://www.eraomnix.pl/msg/user/sponsored/welcome.do";
+  $res = $ua->simple_request($this->lwp_get($base_url));
+  if ($res->is_redirect)
+  {
+    $this->debug_print('Logging in...');
+    my $login_uri = "$proto://www.eraomnix.pl/sso2/omnix_iframe/login.jsp";
+    $res = $ua->simple_request($this->lwp_get($login_uri));
+    $this->http_error($login_uri) unless $res->is_success;
+    require HTML::Form;
+    my $form = HTML::Form->parse($res);
+    my $re_action = qr{/authenticate\.do(;jsessionid=[0-9A-Za-z]+![0-9]+)?$};
+    $this->api_error('L1') unless $form->action =~ $re_action;
+    $form->value('login' => $login);
+    $form->value('password' => $password);
+    $res = $ua->simple_request($form->click);
+    $this->http_error($form->action) unless $res->is_redirect;
+    $this->quit('Login error: blocked account') if $res->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
+    $res = $ua->simple_request($this->lwp_get($base_url));
+  }
+  $this->quit('Login error') if $res->is_redirect;
+  $this->http_error($base_url) unless $res->is_success;
+  $this->debug_print('Logged in!');
+  my $remaining = $this->extract_remaining($res->content);
+  return ($ua, $res, $remaining);
 }
 
-debug "Login: $login\@$site";
-
-my $ua = lwp_init();
-
-$ua->cookie_jar->scan(
-  sub
-  {
-    my ($version, $key, $val, $path, $domain) = @_;
-    $account0 = $val if $domain eq FAKE_DOMAIN and $key eq 'account';
-  }
-);
-$ua->cookie_jar->clear(COOKIE_DOMAIN) if $account ne $account0;
-$ua->cookie_jar->set_cookie(0, 'account', $account, '/', FAKE_DOMAIN, undef, undef, undef, 1 << 25, undef);
-
-my $number;
-my $body;
-my $body_len;
-my $signature_len;
-my $message_len;
-
-if ($action == ACTION_SEND)
+sub extract_remaining($$)
 {
-  pod2usage(1) if $#ARGV != 1;
+  (my $this, $_) = @_;
+  $this->api_error('c1') unless m{Pozosta\xb3o SMS\xf3w: <b>([0-9]+)</b>};
+  return int($1);
+}
+
+sub action_send($)
+{
+  my ($this) = @_;
+  my $number;
+  my ($body, $body_len);
+  my $signature_len;
+  my $message_len;
+
+  $this->pod2usage(1) if $#ARGV != 1;
 
   require Encode;
   require Text::Wrap;
-  my $codeset = codeset();
-  debug "Codeset: $codeset";
+  my $codeset = $this->codeset();
+  $this->debug_print("Codeset: $codeset");
   binmode STDERR, ":encoding($codeset)";
   binmode STDOUT, ":encoding($codeset)";
   
   (my $recipient, $body) = @ARGV;
   $recipient = Encode::decode($codeset, $recipient);
   $body = Encode::decode($codeset, $body);
-  ($number, $recipient) = resolve_person $recipient;
-  debug "Recipient: $recipient";
-  $body = transliterate($body);
-  $signature = transliterate(Encode::decode($codeset, $signature));
-  debug "Message:\n" . Text::Wrap::wrap("  ", "  ", $body) . "\n\n" . Text::Wrap::wrap("  ", "  ", $signature) . "\n";
+  ($number, $recipient) = $this->resolve_person($recipient);
+  $this->debug_print("Recipient: $recipient");
+  $body = $this->transliterate($body);
+  $signature = $this->transliterate(Encode::decode($codeset, $signature));
+  $this->debug_print("Message:\n" . Text::Wrap::wrap("  ", "  ", $body) . "\n\n" . Text::Wrap::wrap("  ", "  ", $signature) . "\n");
   $body_len = length $body;
   $signature_len = length $signature;
   $message_len = $body_len + $signature_len;
-  debug "Message length: $body_len + $signature_len = $message_len";
-}
-elsif ($action == ACTION_LOGOUT)
-{
-  $ua->cookie_jar->clear(COOKIE_DOMAIN);
-  debug 'Cookies has been purged';
-  exit;
-}
-elsif ($action == ACTION_VOID)
-{
-  exit;
-}
-
-debug 'Warning: unsecure connection!' if $proto eq 'http';
-my $res;
-my $base_url = "$proto://www.eraomnix.pl/msg/user/sponsored/welcome.do";
-$res = $ua->simple_request(GET $base_url);
-if ($res->is_redirect)
-{
-  debug 'Logging in...';
-  my $login_uri = "$proto://www.eraomnix.pl/sso2/omnix_iframe/login.jsp";
-	$res = $ua->simple_request(GET $login_uri);
-  http_error $login_uri unless $res->is_success;
+  $this->debug_print("Message length: $body_len + $signature_len = $message_len");
+  my ($ua, $response, $remaining) = $this->do_login();
+  $this->quit('Message limit exceeded') if $remaining == 0;
+  $this->debug_print('Ready to send...');
   require HTML::Form;
-  my $form = HTML::Form->parse($res);
-  my $re_action = qr{/authenticate\.do(;jsessionid=[0-9A-Za-z]+![0-9]+)?$};
-  api_error 'L1' unless $form->action =~ $re_action;
-  $form->value('login' => $login);
-  $form->value('password' => $password);
-  $res = $ua->simple_request($form->click);
-  http_error $form->action unless $res->is_redirect;
-  quit 'Login error: blocked account' if $res->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
-  $res = $ua->simple_request(GET $base_url);
+  my $form = HTML::Form->parse($response);
+  my $character_limit = $form->value('top.characterLimit');
+  $this->api_error('s1') unless $character_limit =~ /^[0-9]{3}$/;
+  $this->quit("Message too long ($body_len + $signature_len > $character_limit)") if $message_len > $character_limit;
+  $form->value('top.phoneReceiver' => $number);
+  $form->value('top.text' => $body);
+  $form->value('top.signature' => $signature);
+  $this->debug_print('Sending...');
+  $response = $ua->simple_request($form->click('send'));
+  $this->http_error($form->action) unless $response->is_success;
+  if ($response->content =~ m{<span style="color: red;"><b>(.*?)</b></span>})
+  {
+    $_ = $1;
+    my $info = 'Error while sending the message';
+    $info .= ': non-Era recipient' if /spoza sieci PTC/;
+    $this->quit($info);
+  }
+  my $remaining_after = $this->extract_remaining($response->content);
+  $this->quit('Error while sending the message, I guess...') unless $remaining_after < $remaining;
+  $this->debug_print('Looks OK');
+  $this->debug_print("Number of remaining messages: $remaining_after");
 }
-quit 'Login error' if $res->is_redirect;
-http_error $base_url unless $res->is_success;
-debug 'Logged in!';
 
-sub extract_remaining($)
+sub action_count($)
 {
-  ($_) = @_;
-  api_error 'c1' unless m{Pozosta\xb3o SMS\xf3w: <b>([0-9]+)</b>};
-  return int($1);
-}
-
-my $remaining = extract_remaining($res->content);
-
-if ($action == ACTION_COUNT)
-{
+  my ($this) = @_;
+  ($_, $_, my $remaining) = $this->do_login();
   print "Number of remaining messages: $remaining\n";
 }
-elsif ($action == ACTION_INBOX)
+
+sub action_inbox($)
 {
   require HTML::Entities;
   require Text::Wrap;
   require Encode;
   
-  my $codeset = codeset();
-  debug "Codeset: $codeset";
+  my ($this) = @_;
+ 
+  my ($ua, $res) = $this->do_login();
+
+  my $codeset = $this->codeset();
+  $this->debug_print("Codeset: $codeset");
   binmode STDOUT, ":encoding($codeset)";
   
-  $res->content =~ m{<span id="inboxSize">([0-9]+)</span>} or api_error 'Inbox1';
+  $res->content =~ m{<span id="inboxSize">([0-9]+)</span>} or $this->api_error('Inbox1');
   my $n = int($1);
   my $url = "$proto://www.eraomnix.pl/msg/user/sponsored/inbox/prepare.do";
-  $res = $ua->simple_request(GET $url);
+  $res = $ua->simple_request($this->lwp_get($url));
   $res->is_success or http_error $url;
-  $reject_unpersons = 0;
+  $this->reject_unpersons(0);
   for my $i (0 .. $n-1)
   {
-    $res->content =~ m{case\s+$i:\s+document\.getElementById\("textdiv"\)\.innerHTML\s+=\s+'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}),\s+Od:\s+<b>'\s*\+\s*'(\d+)</b>'\s*\+\s*'\s+Do:\s+<b>\d+</b><br/><br/>'\s*\+\s*wrapText\('(.*?)'\);\s*break;} or api_error 'Inbox2';
+    $res->content =~ m{case\s+$i:\s+document\.getElementById\("textdiv"\)\.innerHTML\s+=\s+'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}),\s+Od:\s+<b>'\s*\+\s*'(\d+)</b>'\s*\+\s*'\s+Do:\s+<b>\d+</b><br/><br/>'\s*\+\s*wrapText\('(.*?)'\);\s*break;} or $this->api_error('Inbox2');
     my ($date, $sender, $text) = ($1, $2, $3);
-    $sender = resolve_number $sender;
+    $sender = $this->resolve_number($sender);
     print "From: $sender\n";
     print "Date: $date\n";
     $text = HTML::Entities::decode_entities($text);
@@ -343,33 +221,8 @@ elsif ($action == ACTION_INBOX)
     print "Contents: $text\n\n";
   }
 }
-elsif ($action == ACTION_SEND)
-{
-  quit 'Message limit exceeded' if $remaining == 0;
-  debug 'Ready to send...';
-  require HTML::Form;
-  my $form = HTML::Form->parse($res);
-  my $character_limit = $form->value('top.characterLimit');
-  api_error 's1' unless $character_limit =~ /^[0-9]{3}$/;
-  quit "Message too long ($body_len + $signature_len > $character_limit)" if $message_len > $character_limit;
-  $form->value('top.phoneReceiver' => $number);
-  $form->value('top.text' => $body);
-  $form->value('top.signature' => $signature);
-  debug 'Sending...';
-  $res = $ua->simple_request($form->click('send'));
-  http_error $form->action unless $res->is_success;
-  if ($res->content =~ m{<span style="color: red;"><b>(.*?)</b></span>})
-  {
-    $_ = $1;
-    my $info = 'Error while sending the message';
-    $info .= ': non-Era recipient' if /spoza sieci PTC/;
-    quit $info;
-  }
-  my $remaining_after = extract_remaining $res->content;
-  quit 'Error while sending the message, I guess...' unless $remaining_after < $remaining;
-  debug 'Looks OK';
-  debug "Number of remaining messages: $remaining_after";
-}
+
+main(__PACKAGE__);
 
 __END__
 
