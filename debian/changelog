@@ -1,3 +1,9 @@
+eraomnix (0.8.1) unstable; urgency=low
+
+  * Depend on libcrypt-ssleay-perl (this fixes a regression of 0.8).
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Thu,  2 Nov 2006 11:50:49 +0100
+
 eraomnix (0.8) unstable; urgency=low
 
   * Rewritten using kawute, the codebase for sending SMs.
