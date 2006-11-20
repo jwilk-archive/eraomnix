@@ -1,6 +1,6 @@
 Source: eraomnix
 Section: net
-Priority: optional
+Priority: extra
 Maintainer: Jakub Wilk <ubanus@users.sf.net>
 Build-Depends: debhelper (>= 5), perl
 Standards-Version: 3.7.2
@@ -9,4 +9,4 @@ Bugs: mailto:ubanus@users.sf.net
 Package: eraomnix
 Architecture: all
 Depends: kawute (>= 0.8), libcrypt-ssleay-perl
-Description: Send SMs via Era Omnix gateway
+Description: Send SMs and MMs via Era Omnix gateway

@@ -8,7 +8,7 @@ my $this = __PACKAGE__;
 
 use base qw(kawute);
 
-our $VERSION = '0.8.1';
+our $VERSION = '0.8.2';
 sub version($) { $EraOmnix::VERSION; }
 sub site($) { 'eraomnix.pl'; }
 sub software_name($) { 'eraomnix'; }
@@ -34,6 +34,7 @@ my $login = '';
 my $password;
 my $proto = 'https';
 my $signature = undef;
+my $mms = 0;
 
 sub main($)
 {
@@ -55,6 +56,7 @@ sub main($)
     'logout' =>         sub { $action = ACTION_LOGOUT; },
     'void' =>           sub { $action = ACTION_VOID; },
     'signature=s' =>    \$signature,
+    'mms' =>            \$mms,
   );
   $this->go_home();
   $this->read_config
@@ -91,37 +93,51 @@ sub do_login($)
   my ($this) = @_;
   my $ua = $this->lwp_init();
   $this->debug_print('Warning: unsecure connection!') if $proto eq 'http';
-  my $res;
   my $base_url = "$proto://www.eraomnix.pl/msg/user/sponsored/welcome.do";
-  $res = $ua->simple_request($this->lwp_get($base_url));
-  if ($res->is_redirect)
+  my $response = $ua->simple_request($this->lwp_get($base_url));
+  if ($response->is_redirect)
   {
+    require HTML::Form;
     $this->debug_print('Logging in...');
     my $login_uri = "$proto://www.eraomnix.pl/sso2/omnix_iframe/login.jsp";
-    $res = $ua->simple_request($this->lwp_get($login_uri));
-    $this->http_error($login_uri) unless $res->is_success;
-    require HTML::Form;
-    my $form = HTML::Form->parse($res);
+    $response = $ua->simple_request($this->lwp_get($login_uri));
+    $this->http_error($login_uri) unless $response->is_success;
+    my $form = HTML::Form->parse($response);
     my $re_action = qr{/authenticate\.do(;jsessionid=[0-9A-Za-z]+![0-9]+)?$};
     $this->api_error('L1') unless $form->action =~ $re_action;
     $form->value('login' => $login);
     $form->value('password' => $password);
-    $res = $ua->simple_request($form->click);
-    $this->http_error($form->action) unless $res->is_redirect;
-    $this->quit('Login error: blocked account') if $res->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
-    $res = $ua->simple_request($this->lwp_get($base_url));
+    $response = $ua->simple_request($form->click);
+    $this->http_error($form->action) unless $response->is_redirect;
+    $this->quit('Login error: blocked account') 
+      if $response->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
+    $response = $ua->simple_request($this->lwp_get($base_url));
   }
-  $this->quit('Login error') if $res->is_redirect;
-  $this->http_error($base_url) unless $res->is_success;
+  $this->quit('Login error') if $response->is_redirect;
+  $this->http_error($base_url) unless $response->is_success;
   $this->debug_print('Logged in!');
-  my $remaining = $this->extract_remaining($res->content);
-  return ($ua, $res, $remaining);
+  if ($mms && $response->content =~ /"mmsTab"/)
+  {
+    require HTML::Form;
+    my $form = HTML::Form->parse($response);
+    $response = $ua->simple_request($form->click('mmsTab'));
+    $this->http_error($form->action) unless $response->is_success;
+  }
+  elsif (!$mms && $response->content =~ /"smsTab"/)
+  {
+    require HTML::Form;
+    my $form = HTML::Form->parse($response);
+    $response = $ua->simple_request($form->click('smsTab'));
+    $this->http_error($form->action) unless $response->is_success;
+  }
+  my $remaining = $this->extract_remaining($response->content);
+  return ($ua, $response, $remaining);
 }
 
 sub extract_remaining($$)
 {
   (my $this, $_) = @_;
-  $this->api_error('c1') unless m{Pozosta\xb3o SMS\xf3w: <b>([0-9]+)</b>};
+  $this->api_error('c1') unless m{Pozosta\xb3o [SM]MS\xf3w: <b>([0-9]+)</b>};
   return int($1);
 }
 
@@ -161,6 +177,7 @@ sub action_send($)
   my $form = HTML::Form->parse($response);
   my $character_limit = $form->value('top.characterLimit');
   $this->api_error('s1') unless $character_limit =~ /^[0-9]{3}$/;
+  $character_limit--;
   $this->quit("Message too long ($body_len + $signature_len > $character_limit)") if $message_len > $character_limit;
   $form->value('top.phoneReceiver' => $number);
   $form->value('top.text' => $body);
@@ -228,13 +245,13 @@ __END__
 
 =head1 NAME
 
-eraomnix -- send SMs via Era Omnix gateway
+eraomnix -- send SMs and MMs via Era Omnix gateway
 
 =head1 SYNOPSIS
 
 =over 4
 
-=item eraomnix [-s] [--force] [--signature I<< <signature> >>] I<< <phone-number> >> I<< <text> >>
+=item eraomnix [-s] [--mms] [--force] [--signature I<< <signature> >>] I<< <phone-number> >> I<< <text> >>
 
 =item eraomnix -c
 

@@ -1,3 +1,9 @@
+eraomnix (0.8.2) unstable; urgency=low
+
+  * Support for sending MMs. (--mms command line option)
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Mon, 20 Nov 2006 18:56:44 +0100
+
 eraomnix (0.8.1) unstable; urgency=low
 
   * Depend on libcrypt-ssleay-perl (this fixes a regression of 0.8).
