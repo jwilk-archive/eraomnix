@@ -10,3 +10,5 @@ Package: eraomnix
 Architecture: all
 Depends: kawute (>= 0.8), libcrypt-ssleay-perl
 Description: Send SMs and MMs via Era Omnix gateway
+ eraomnix allows you to send SMs and MMs via the web-to-SMS gateway at
+ <http://eraomnix.pl/>.

@@ -110,10 +110,15 @@ sub do_login($)
     $response = $ua->simple_request($form->click);
     $this->http_error($form->action) unless $response->is_redirect;
     $this->quit('Login error: blocked account') 
-      if $response->header('Location') =~ m{^https?://www\.eraomnix\.pl/pl/login/blocked$};
+      if $response->header('Location') =~ m{^https?://www[.]eraomnix[.]pl/pl/login/blocked$};
     $response = $ua->simple_request($this->lwp_get($base_url));
   }
-  $this->quit('Login error') if $response->is_redirect;
+  if ($response->is_redirect)
+  {
+    $this->quit('Service temporarily unavailable')
+      if $response->header('Location') =~ m{^https?://www[.]eraomnix[.]pl/pl/error$};
+    $this->quit('Login error');
+  }
   $this->http_error($base_url) unless $response->is_success;
   $this->debug_print('Logged in!');
   if ($mms && $response->content =~ /"mmsTab"/)
@@ -253,7 +258,7 @@ eraomnix -- send SMs and MMs via Era Omnix gateway
 
 =item eraomnix [-s] [--mms] [--force] [--signature I<< <signature> >>] I<< <phone-number> >> I<< <text> >>
 
-=item eraomnix -c
+=item eraomnix [--mms] -c
 
 =item eraomnix -m
 
