@@ -179,7 +179,8 @@ sub action_send($)
   $this->quit('Message limit exceeded') if $remaining == 0;
   $this->debug_print('Ready to send...');
   require HTML::Form;
-  my $form = HTML::Form->parse($response);
+  my @forms = HTML::Form->parse($response);
+  my $form = $forms[$#forms];
   my $character_limit = $form->value('top.characterLimit');
   $this->api_error('s1') unless $character_limit =~ /^[0-9]{3}$/;
   $character_limit--;
