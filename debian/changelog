@@ -1,3 +1,9 @@
+eraomnix (0.8.4) unstable; urgency=low
+
+  * Follow the API changes.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Thu, 21 Jun 2007 13:36:10 +0200
+
 eraomnix (0.8.3) unstable; urgency=low
 
   * Support for a temporary unavailability of the server.

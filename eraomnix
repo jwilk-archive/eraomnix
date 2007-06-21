@@ -8,7 +8,7 @@ my $this = __PACKAGE__;
 
 use base qw(kawute);
 
-our $VERSION = '0.8.2';
+our $VERSION = '0.8.4';
 sub version($) { $EraOmnix::VERSION; }
 sub site($) { 'eraomnix.pl'; }
 sub software_name($) { 'eraomnix'; }
