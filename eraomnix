@@ -124,14 +124,16 @@ sub do_login($)
   if ($mms && $response->content =~ /"mmsTab"/)
   {
     require HTML::Form;
-    my $form = HTML::Form->parse($response);
+    my @forms = HTML::Form->parse($response);
+    my $form = $forms[$#forms];
     $response = $ua->simple_request($form->click('mmsTab'));
     $this->http_error($form->action) unless $response->is_success;
   }
   elsif (!$mms && $response->content =~ /"smsTab"/)
   {
     require HTML::Form;
-    my $form = HTML::Form->parse($response);
+    my @forms = HTML::Form->parse($response);
+    my $form = $forms[$#forms];
     $response = $ua->simple_request($form->click('smsTab'));
     $this->http_error($form->action) unless $response->is_success;
   }
