@@ -1,3 +1,9 @@
+eraomnix (0.8.5) unstable; urgency=low
+
+  * Follow the API changes.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Fri, 03 Aug 2007 09:41:32 +0200
+
 eraomnix (0.8.4) unstable; urgency=low
 
   * Follow the API changes.
