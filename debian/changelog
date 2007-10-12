@@ -1,3 +1,9 @@
+eraomnix (0.8.6) unstable; urgency=low
+
+  * Verify SSL server certificate.
+
+ -- Jakub Wilk <ubanus@users.sf.net>  Fri, 12 Oct 2007 17:27:01 +0200
+
 eraomnix (0.8.5) unstable; urgency=low
 
   * Follow the API changes.
