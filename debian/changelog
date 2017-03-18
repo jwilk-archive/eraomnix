@@ -2,73 +2,73 @@ eraomnix (0.8.6) unstable; urgency=low
 
   * Verify SSL server certificate.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Fri, 12 Oct 2007 17:27:01 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Fri, 12 Oct 2007 17:27:01 +0200
 
 eraomnix (0.8.5) unstable; urgency=low
 
   * Follow the API changes.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Fri, 03 Aug 2007 09:41:32 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Fri, 03 Aug 2007 09:41:32 +0200
 
 eraomnix (0.8.4) unstable; urgency=low
 
   * Follow the API changes.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Thu, 21 Jun 2007 13:36:10 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Thu, 21 Jun 2007 13:36:10 +0200
 
 eraomnix (0.8.3) unstable; urgency=low
 
   * Support for a temporary unavailability of the server.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Thu, 22 Mar 2007 10:40:17 +0100
+ -- Jakub Wilk <jwilk@jwilk.net>  Thu, 22 Mar 2007 10:40:17 +0100
 
 eraomnix (0.8.2) unstable; urgency=low
 
   * Support for sending MMs. (--mms command line option)
 
- -- Jakub Wilk <ubanus@users.sf.net>  Mon, 20 Nov 2006 18:56:44 +0100
+ -- Jakub Wilk <jwilk@jwilk.net>  Mon, 20 Nov 2006 18:56:44 +0100
 
 eraomnix (0.8.1) unstable; urgency=low
 
   * Depend on libcrypt-ssleay-perl (this fixes a regression of 0.8).
 
- -- Jakub Wilk <ubanus@users.sf.net>  Thu,  2 Nov 2006 11:50:49 +0100
+ -- Jakub Wilk <jwilk@jwilk.net>  Thu,  2 Nov 2006 11:50:49 +0100
 
 eraomnix (0.8) unstable; urgency=low
 
   * Rewritten using kawute, the codebase for sending SMs.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Mon, 30 Oct 2006 20:31:46 +0100
+ -- Jakub Wilk <jwilk@jwilk.net>  Mon, 30 Oct 2006 20:31:46 +0100
 
 eraomnix (0.7) unstable; urgency=low
 
   * Better config file parsing.
   * Use Text::Unidecode instead of konwert.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Fri, 15 Sep 2006 08:49:37 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Fri, 15 Sep 2006 08:49:37 +0200
 
 eraomnix (0.6) unstable; urgency=low
 
   * Action -m: resolve phone numbers. 
 
- -- Jakub Wilk <ubanus@users.sf.net>  Thu, 24 Aug 2006 16:07:17 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Thu, 24 Aug 2006 16:07:17 +0200
 
 eraomnix (0.5) unstable; urgency=low
 
   * Make 'RejectUnperson' and 'UseSSL' configuration options actually work.
   * New configuration option: 'UseBell'.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Sat, 19 Aug 2006 18:05:30 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Sat, 19 Aug 2006 18:05:30 +0200
 
 eraomnix (0.4) unstable; urgency=low
 
   * Support for multiple accounts.
   * Support for reading incoming messages.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Sat, 12 Aug 2006 19:37:33 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Sat, 12 Aug 2006 19:37:33 +0200
 
 eraomnix (0.3) unstable; urgency=low
 
   * Initial release.
 
- -- Jakub Wilk <ubanus@users.sf.net>  Thu, 27 Jul 2006 12:22:22 +0200
+ -- Jakub Wilk <jwilk@jwilk.net>  Thu, 27 Jul 2006 12:22:22 +0200
