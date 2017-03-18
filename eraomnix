@@ -93,7 +93,7 @@ sub do_login($)
 {
   my ($this) = @_;
   my $ua = $this->lwp_init();
-  $this->debug_print('Warning: unsecure connection!') if $proto eq 'http';
+  $this->debug_print('Warning: insecure connection!') if $proto eq 'http';
   my $base_url = "$proto://www.eraomnix.pl/msg/user/sponsored/welcome.do";
   my $response = $ua->simple_request($this->lwp_get($base_url));
   if ($response->is_redirect)
