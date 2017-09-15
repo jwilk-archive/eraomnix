@@ -49,7 +49,7 @@ eraomnix (0.7) unstable; urgency=low
 
 eraomnix (0.6) unstable; urgency=low
 
-  * Action -m: resolve phone numbers. 
+  * Action -m: resolve phone numbers.
 
  -- Jakub Wilk <jwilk@jwilk.net>  Thu, 24 Aug 2006 16:07:17 +0200
 

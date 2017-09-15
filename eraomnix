@@ -62,18 +62,18 @@ sub main($)
   $this->go_home();
   $this->read_config
   (
-    'login' => sub 
+    'login' => sub
       { $login = shift; },
-    'password' => sub 
+    'password' => sub
       { $password = shift; },
     'password64' => sub
-      { 
+      {
         require MIME::Base64;
         $password = MIME::Base64::decode(shift);
       },
     'signature' => sub
       { $signature = shift if not defined $signature; },
-    'usessl' => sub 
+    'usessl' => sub
       { $proto = shift() ? 'https' : 'http'; },
   );
   $this->reject_unpersons(0) if $this->force();
@@ -110,7 +110,7 @@ sub do_login($)
     $form->value('password' => $password);
     $response = $ua->simple_request($form->click);
     $this->http_error($form->action) unless $response->is_redirect;
-    $this->quit('Login error: blocked account') 
+    $this->quit('Login error: blocked account')
       if $response->header('Location') =~ m{^https?://www[.]eraomnix[.]pl/pl/login/blocked$};
     $response = $ua->simple_request($this->lwp_get($base_url));
   }
@@ -165,7 +165,7 @@ sub action_send($)
   $this->debug_print("Codeset: $codeset");
   binmode STDERR, ":encoding($codeset)";
   binmode STDOUT, ":encoding($codeset)";
-  
+
   (my $recipient, $body) = @ARGV;
   $recipient = Encode::decode($codeset, $recipient);
   $body = Encode::decode($codeset, $body);
@@ -219,15 +219,15 @@ sub action_inbox($)
   require HTML::Entities;
   require Text::Wrap;
   require Encode;
-  
+
   my ($this) = @_;
- 
+
   my ($ua, $res) = $this->do_login();
 
   my $codeset = $this->codeset();
   $this->debug_print("Codeset: $codeset");
   binmode STDOUT, ":encoding($codeset)";
-  
+
   $res->content =~ m{<span id="inboxSize">([0-9]+)</span>} or $this->api_error('Inbox1');
   my $n = int($1);
   my $url = "$proto://www.eraomnix.pl/msg/user/sponsored/inbox/prepare.do";
